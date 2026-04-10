@@ -1,0 +1,50 @@
+# ── Python ────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ── Stan compiled binaries ────────────────────────────────────────────
+# These are platform-specific (Windows .exe, Linux ELF, macOS Mach-O).
+# Recompile on first run: cmdstanpy calls CmdStanModel(stan_file=...) and
+# caches the result automatically.
+*.exe
+*.hpp          # Stan-generated C++ header
+*.o
+*.d
+cmdstan-*/
+
+# ── Stan sampling output ──────────────────────────────────────────────
+# Chain CSV files written to ~/stan_logs/ (outside repo) or local dir.
+stan_logs/
+*.csv.gz
+profile.csv
+
+# ── Fit artefacts ─────────────────────────────────────────────────────
+recovered_fit/
+*.nc           # ArviZ / NetCDF posteriors
+*.pkl          # pickled fit objects
+
+# ── Test / scratch data ───────────────────────────────────────────────
+# Commit only curated example datasets.
+really_thin_data.csv
+really_thin_data.csv.xlsx
+
+# ── Streamlit ─────────────────────────────────────────────────────────
+.streamlit/secrets.toml
+
+# ── Claude Code local settings ────────────────────────────────────────
+.claude/settings.local.json
+
+# ── OS cruft ──────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*~

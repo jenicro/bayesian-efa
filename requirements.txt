@@ -1,0 +1,6 @@
+pymc>=5.10
+arviz>=0.17
+numpy
+pandas
+matplotlib
+streamlit>=1.30
