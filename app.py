@@ -13,8 +13,12 @@ Run with:
 from __future__ import annotations
 
 import io
+import json
+import subprocess
+import sys
 import time
 from itertools import permutations
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -105,7 +109,11 @@ if not _blas:
 # ====================================================================
 with st.sidebar:
     st.header("1 · Data")
-    src = st.radio("Source", ["Simulate", "Upload CSV", "Server file"], index=0)
+    src = st.radio(
+        "Source",
+        ["Simulate", "Upload CSV", "Server file", "Load results from disk"],
+        index=0,
+    )
 
     truth = None
     if src == "Simulate":
@@ -189,7 +197,7 @@ with st.sidebar:
             st.stop()
         df = pd.read_csv(up).select_dtypes(include=[np.number])
         Y = df.values
-    else:
+    elif src == "Server file":
         import os
         default_path = os.path.expanduser("~/befa-app/data.csv")
         server_path = st.text_input("Path on server", value=default_path)
@@ -198,6 +206,55 @@ with st.sidebar:
             st.stop()
         df = pd.read_csv(server_path).select_dtypes(include=[np.number])
         Y = df.values
+    else:  # "Load results from disk"
+        import os
+        _res_dir_default = st.session_state.get("_results_dir", str(Path.home() / "befa-app" / "overnight_results"))
+        _res_dir = st.text_input("Results directory", value=_res_dir_default, key="_res_dir_input")
+        _res_path = Path(_res_dir)
+        _y_path = _res_path / "Y.csv"
+        if not _y_path.exists():
+            st.error(f"Y.csv not found in: {_res_dir}")
+            st.stop()
+        df = pd.read_csv(_y_path)
+        Y = df.values.astype(float)
+        # Load ground truth if available
+        _truth_path = _res_path / "truth.npz"
+        if _truth_path.exists():
+            _t = np.load(_truth_path)
+            truth = {k: _t[k] for k in _t.files}
+        # Pre-populate K and identification from meta.json
+        _meta_path = _res_path / "meta.json"
+        if _meta_path.exists():
+            _meta = json.loads(_meta_path.read_text())
+            if "fit_K" not in st.session_state:
+                st.session_state.fit_K = _meta.get("K", min(3, Y.shape[1] - 1))
+            _disk_identification = _meta.get("identification", "lower_triangular")
+        else:
+            _disk_identification = None
+        # Button to load posteriors
+        _load_btn = st.button("Load posteriors from disk", type="primary")
+        if _load_btn:
+            _lp = _res_path / "Lambda_post.npy"
+            _op = _res_path / "Omega_post.npy"
+            _pp = _res_path / "psi_post.npy"
+            if not (_lp.exists() and _op.exists() and _pp.exists()):
+                st.error("Posterior .npy files not found — fit may still be running.")
+                st.stop()
+            st.session_state._loaded_Lambda = np.load(_lp)
+            st.session_state._loaded_Omega  = np.load(_op)
+            st.session_state._loaded_psi    = np.load(_pp)
+            st.session_state._results_dir   = _res_dir
+            _summ_path = _res_path / "summary.csv"
+            if _summ_path.exists():
+                _s = pd.read_csv(_summ_path, index_col=0)
+                _sub = _s.loc[_s.index.str.startswith(("Lambda", "Omega", "psi"))]
+                st.session_state._loaded_summary = _sub.rename(
+                    columns={"R_hat": "r_hat", "ESS_bulk": "ess_bulk", "ESS_tail": "ess_tail"}
+                )
+            st.rerun()
+        if "_loaded_Lambda" not in st.session_state:
+            st.info("Configure K and identification below, then click **Load posteriors from disk**.")
+            st.stop()
 
     nan_count = int(np.isnan(Y).sum())
     st.write(
@@ -384,9 +441,27 @@ with st.sidebar:
         )
 
     seed_fit = st.number_input("Seed (fit)", value=1, step=1)
+
+    _is_load_src = (src == "Load results from disk")
     c_go, c_cancel = st.columns(2)
-    go = c_go.button("🚀 Fit", type="primary", width='stretch')
-    cancel_clicked = c_cancel.button("⛔ Abort", width='stretch')
+    go = c_go.button("🚀 Fit", type="primary", width='stretch', disabled=_is_load_src)
+    cancel_clicked = c_cancel.button("⛔ Abort", width='stretch', disabled=_is_load_src)
+
+    # Overnight button — CmdStan only, not when loading from disk
+    _overnight_clicked = False
+    if "CmdStan" in backend and not _is_load_src:
+        _overnight_default_dir = str(
+            Path.home() / "befa-app" / f"overnight_{time.strftime('%Y%m%d_%H%M%S')}"
+        )
+        _overnight_outdir = st.text_input(
+            "Overnight output directory", value=_overnight_default_dir, key="_overnight_outdir"
+        )
+        _overnight_clicked = st.button(
+            "Run overnight (detached)", type="secondary", width='stretch',
+            help="Launches the fit as an independent background process. "
+                 "Safe to close the browser — the fit keeps running on the server. "
+                 "Open 'Load results from disk' when done to view results.",
+        )
 
 # ====================================================================
 # Top: data preview + truth (if simulated)
@@ -431,6 +506,41 @@ if (prog.status == "running"
 
 if st.session_state.pop("auto_fit", False) and prog.status != "running":
     go = True
+
+if _overnight_clicked and prog.status != "running":
+    _odir = Path(st.session_state.get("_overnight_outdir", _overnight_default_dir))
+    _odir.mkdir(parents=True, exist_ok=True)
+    # Save Y to the output directory so the subprocess has it
+    pd.DataFrame(Y, columns=list(df.columns)).to_csv(_odir / "Y.csv", index=False)
+    if truth is not None:
+        np.savez(_odir / "truth.npz", **{k: v for k, v in truth.items()})
+    _cmd = [
+        sys.executable, str(Path(__file__).parent / "run_overnight.py"),
+        "csv", str(_odir / "Y.csv"),
+        "--K", str(K),
+        "--chains", str(chains),
+        "--warmup", str(tune),
+        "--draws", str(draws),
+        "--seed", str(int(seed_fit)),
+        "--identification", identification,
+        "--lkj-eta", str(lkj_eta),
+        "--slab-scale", str(slab_scale),
+        "--missing-model", missing_model,
+        "--outdir", str(_odir),
+    ]
+    _proc = subprocess.Popen(
+        _cmd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    st.session_state._results_dir = str(_odir)
+    st.success(
+        f"Overnight fit started (PID {_proc.pid}). "
+        f"Results will appear in: `{_odir}`. "
+        f"You can close the browser — the fit runs independently on the server. "
+        f"Use **Load results from disk** to view results when done."
+    )
 
 if go and prog.status != "running":
     if orthogonal and "CmdStan" in backend:
@@ -499,34 +609,44 @@ if prog.status == "cancelled":
         f"after {prog.elapsed:.1f}s. Click Fit to retry."
     )
     st.stop()
-if prog.status != "done":
+_has_loaded_results = "_loaded_Lambda" in st.session_state
+if prog.status != "done" and not _has_loaded_results:
     st.stop()
 
 # ---- Unpack results --------------------------------------------------
-res = prog.result
 elbo = None
 rhat_summary = None
-if "stan_fit" in res:
-    fit = res["stan_fit"]
-    Lambda_post = fit.stan_variable("Lambda")[None, ...]
-    Omega_post = fit.stan_variable("Omega")[None, ...]
-    psi_post = fit.stan_variable("psi")[None, ...]
-    s = fit.summary()
-    rhat_summary = s.loc[s.index.str.startswith(("Lambda", "Omega", "psi"))]
-    rhat_summary = rhat_summary.rename(
-        columns={"R_hat": "r_hat", "ESS_bulk": "ess_bulk", "ESS_tail": "ess_tail"}
-    )
+if _has_loaded_results and prog.status != "done":
+    Lambda_post = st.session_state._loaded_Lambda
+    Omega_post  = st.session_state._loaded_Omega
+    psi_post    = st.session_state._loaded_psi
+    rhat_summary = st.session_state.get("_loaded_summary")
+    res = {"_loaded": True}
+    backend_label = f"Loaded from disk ({st.session_state.get('_results_dir', '')})"
+    st.info(f"Results loaded from: `{st.session_state.get('_results_dir', '')}`")
 else:
-    idata = res["idata"]
-    Lambda_post = idata.posterior["Lambda"].values
-    Omega_post = idata.posterior["Omega"].values
-    psi_post = idata.posterior["psi"].values
-    if "elbo" in res:
-        elbo = res["elbo"]
+    res = prog.result
+    if "stan_fit" in res:
+        fit = res["stan_fit"]
+        Lambda_post = fit.stan_variable("Lambda")[None, ...]
+        Omega_post = fit.stan_variable("Omega")[None, ...]
+        psi_post = fit.stan_variable("psi")[None, ...]
+        s = fit.summary()
+        rhat_summary = s.loc[s.index.str.startswith(("Lambda", "Omega", "psi"))]
+        rhat_summary = rhat_summary.rename(
+            columns={"R_hat": "r_hat", "ESS_bulk": "ess_bulk", "ESS_tail": "ess_tail"}
+        )
     else:
-        rhat_summary = az.summary(idata, var_names=["Lambda", "Omega", "psi"])
-backend_label = prog.backend
-st.success(f"{backend_label} finished in {prog.elapsed:.1f}s")
+        idata = res["idata"]
+        Lambda_post = idata.posterior["Lambda"].values
+        Omega_post = idata.posterior["Omega"].values
+        psi_post = idata.posterior["psi"].values
+        if "elbo" in res:
+            elbo = res["elbo"]
+        else:
+            rhat_summary = az.summary(idata, var_names=["Lambda", "Omega", "psi"])
+    backend_label = prog.backend
+    st.success(f"{backend_label} finished in {prog.elapsed:.1f}s")
 
 # ---- Post-hoc identification for unconstrained runs -----------------
 if identification == "unconstrained":
