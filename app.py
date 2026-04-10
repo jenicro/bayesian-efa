@@ -535,13 +535,39 @@ if _overnight_clicked and prog.status != "running":
         stderr=_logfile,
         start_new_session=True,
     )
+    (_odir / "run.pid").write_text(str(_proc.pid))
     st.session_state._results_dir = str(_odir)
+    st.session_state._overnight_pid = _proc.pid
+    st.session_state._overnight_dir = str(_odir)
     st.success(
         f"Overnight fit started (PID {_proc.pid}). "
         f"Results will appear in: `{_odir}`. "
         f"You can close the browser — the fit runs independently on the server. "
         f"Use **Load results from disk** to view results when done."
     )
+
+# Kill button for any known overnight process
+_ov_pid = st.session_state.get("_overnight_pid")
+_ov_dir = st.session_state.get("_overnight_dir")
+if _ov_pid:
+    import os, signal
+    _proc_alive = False
+    try:
+        os.kill(_ov_pid, 0)   # signal 0 = check existence
+        _proc_alive = True
+    except (ProcessLookupError, PermissionError):
+        pass
+    if _proc_alive:
+        if st.button(f"Kill overnight run (PID {_ov_pid})", type="secondary"):
+            try:
+                os.kill(_ov_pid, signal.SIGTERM)
+                st.session_state.pop("_overnight_pid", None)
+                st.toast(f"Sent SIGTERM to PID {_ov_pid}")
+            except Exception as e:
+                st.error(f"Could not kill PID {_ov_pid}: {e}")
+    else:
+        # Process finished — clear the ghost
+        st.session_state.pop("_overnight_pid", None)
 
 if go and prog.status != "running":
     if orthogonal and "CmdStan" in backend:
