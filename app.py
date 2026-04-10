@@ -998,17 +998,40 @@ with tab7:
     L_flat = Lambda_post.reshape(n_draws, P, K)
     O_flat = Omega_post.reshape(n_draws, K, K)
     psi_flat = psi_post.reshape(n_draws, P)
-    rows = []
-    for d in range(n_draws):
-        for j in range(P):
-            for k in range(K):
-                rows.append(("Lambda", d, f"x{j+1}", f"F{k+1}", float(L_flat[d, j, k])))
-        for i in range(K):
-            for j in range(K):
-                rows.append(("Omega", d, f"F{i+1}", f"F{j+1}", float(O_flat[d, i, j])))
-        for j in range(P):
-            rows.append(("psi", d, f"x{j+1}", "", float(psi_flat[d, j])))
-    csv_df = pd.DataFrame(rows, columns=["param", "draw", "row", "col", "value"])
+    draw_idx = np.arange(n_draws)
+    x_labels = [f"x{j+1}" for j in range(P)]
+    f_labels  = [f"F{k+1}" for k in range(K)]
+
+    # Lambda: (n_draws, P, K) → n_draws*P*K rows
+    d_L = np.repeat(draw_idx, P * K)
+    r_L = np.tile(np.repeat(x_labels, K), n_draws)
+    c_L = np.tile(f_labels, n_draws * P)
+    df_lambda = pd.DataFrame({
+        "param": "Lambda", "draw": d_L,
+        "row": r_L, "col": c_L,
+        "value": L_flat.ravel(),
+    })
+
+    # Omega: (n_draws, K, K) → n_draws*K*K rows
+    d_O = np.repeat(draw_idx, K * K)
+    r_O = np.tile(np.repeat(f_labels, K), n_draws)
+    c_O = np.tile(f_labels, n_draws * K)
+    df_omega = pd.DataFrame({
+        "param": "Omega", "draw": d_O,
+        "row": r_O, "col": c_O,
+        "value": O_flat.ravel(),
+    })
+
+    # psi: (n_draws, P) → n_draws*P rows
+    d_P = np.repeat(draw_idx, P)
+    r_P = np.tile(x_labels, n_draws)
+    df_psi = pd.DataFrame({
+        "param": "psi", "draw": d_P,
+        "row": r_P, "col": "",
+        "value": psi_flat.ravel(),
+    })
+
+    csv_df = pd.concat([df_lambda, df_omega, df_psi], ignore_index=True)
     st.download_button(
         "⬇️ All draws (long CSV)",
         csv_df.to_csv(index=False).encode(),

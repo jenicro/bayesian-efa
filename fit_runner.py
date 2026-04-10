@@ -110,19 +110,22 @@ def _make_nuts_callback(prog: FitProgress, total_per_chain: int, chains: int):
 
 
 # ---------- Workers ---------------------------------------------------
-def _run_pymc_advi(prog, Y, K, n_iter, lkj_eta, slab_scale, seed,
-                   identification="lower_triangular", anchors=None,
-                   orthogonal=False):
-    import pymc as pm
+def _build_pymc_model(prog, Y, K, lkj_eta, slab_scale, identification, anchors, orthogonal):
     from bayesian_efa import build_model
-
     prog.phase = "compiling"
     prog.message = "building model…"
-    model = build_model(
+    return build_model(
         Y, K, lkj_eta=lkj_eta, slab_scale=slab_scale,
         identification=identification, anchors=anchors,
         orthogonal=orthogonal,
     )
+
+
+def _run_pymc_advi(prog, Y, K, n_iter, lkj_eta, slab_scale, seed,
+                   identification="lower_triangular", anchors=None,
+                   orthogonal=False):
+    import pymc as pm
+    model = _build_pymc_model(prog, Y, K, lkj_eta, slab_scale, identification, anchors, orthogonal)
     prog.phase = "ADVI"
     prog.message = "fitting…"
     tracker = _ADVITracker(prog, n_iter)
@@ -144,15 +147,7 @@ def _run_pymc_nuts(prog, Y, K, draws, tune, chains, lkj_eta, slab_scale, seed,
                    identification="lower_triangular", anchors=None,
                    orthogonal=False):
     import pymc as pm
-    from bayesian_efa import build_model
-
-    prog.phase = "compiling"
-    prog.message = "building model…"
-    model = build_model(
-        Y, K, lkj_eta=lkj_eta, slab_scale=slab_scale,
-        identification=identification, anchors=anchors,
-        orthogonal=orthogonal,
-    )
+    model = _build_pymc_model(prog, Y, K, lkj_eta, slab_scale, identification, anchors, orthogonal)
     cb = _make_nuts_callback(prog, draws + tune, chains)
     prog.phase = "warmup"
     prog.message = "sampling…"
