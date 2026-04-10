@@ -541,10 +541,10 @@ if _overnight_clicked and prog.status != "running":
     st.session_state._overnight_dir = str(_odir)
     st.success(
         f"Overnight fit started (PID {_proc.pid}). "
-        f"Results will appear in: `{_odir}`. "
         f"You can close the browser — the fit runs independently on the server. "
         f"Use **Load results from disk** to view results when done."
     )
+    st.code(f"tail -f {_odir}/run.log", language="bash")
 
 # Kill button for any known overnight process
 _ov_pid = st.session_state.get("_overnight_pid")
