@@ -528,10 +528,11 @@ if _overnight_clicked and prog.status != "running":
         "--missing-model", missing_model,
         "--outdir", str(_odir),
     ]
+    _logfile = open(_odir / "run.log", "w")
     _proc = subprocess.Popen(
         _cmd,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=_logfile,
+        stderr=_logfile,
         start_new_session=True,
     )
     st.session_state._results_dir = str(_odir)
